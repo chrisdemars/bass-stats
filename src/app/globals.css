@@ -171,6 +171,13 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+   theme toggle — pure CSS icon swap, see ThemeToggle.tsx for why
+   --------------------------------------------------------------------------- */
+.icon-moon { display: none; }
+:root[data-theme="light"] .icon-sun { display: none; }
+:root[data-theme="light"] .icon-moon { display: block; }
+
+/* ---------------------------------------------------------------------------
    motion & focus
    --------------------------------------------------------------------------- */
 @keyframes pulse-live {

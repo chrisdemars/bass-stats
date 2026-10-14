@@ -1,28 +1,27 @@
 "use client";
 
-import { useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
-type Theme = "dark" | "light";
-
-function readTheme(): Theme {
-  if (typeof document === "undefined") return "dark";
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
-
 /**
- * Paired with the inline script in layout.tsx, which applies the stored theme
- * before first paint. Reading it via a lazy `useState` initializer (rather
- * than an effect) means the client's first render already shows the right
- * icon instead of flashing the SSR default and then correcting itself.
+ * No React state at all — the icon swap is pure CSS, keyed off the
+ * `data-theme` attribute the inline script in layout.tsx sets on <html>
+ * before first paint (see the `.icon-sun` / `.icon-moon` rules in
+ * globals.css).
+ *
+ * An earlier version stored the theme in `useState` and read it from the
+ * DOM during the client's first render. That is unsafe: the server has to
+ * guess a default ("dark") since `document` doesn't exist during SSR, and
+ * a visitor whose OS preference resolves the inline script to "light"
+ * before hydration runs gets a real hydration mismatch — React discards
+ * and re-renders the whole subtree. Driving the swap with CSS means both
+ * icons exist in the SSR HTML unconditionally, so there is nothing for
+ * hydration to disagree about.
  */
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(readTheme);
-
   function toggle() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.dataset.theme = next;
+    const root = document.documentElement;
+    const next = root.dataset.theme === "light" ? "dark" : "light";
+    root.dataset.theme = next;
     try {
       localStorage.setItem("bass-stats-theme", next);
     } catch {
@@ -34,11 +33,11 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-      suppressHydrationWarning
+      aria-label="Toggle color theme"
       className="grid size-8 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-ink"
     >
-      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+      <Sun size={16} className="icon-sun" />
+      <Moon size={16} className="icon-moon" />
     </button>
   );
 }
