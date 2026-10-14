@@ -16,15 +16,29 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "./parse";
 import type {
-  IngestOptions, IngestReport, SourceAdapter, SourceEvent, SourceResult,
+  IngestOptions, IngestReport, RosterFilter, RosterReport,
+  SourceAdapter, SourceAnglerProfile, SourceEvent, SourceResult,
 } from "./types";
+import type { AnglerClass } from "@/lib/types";
 
 interface AnglerKey {
   id: string;
 }
 
+/** The identity fields shared by a result row and a roster profile — enough to find-or-create an angler. */
+interface AnglerIdentity {
+  externalId?: string | null;
+  firstName: string;
+  lastName: string;
+  hometownCity?: string | null;
+  hometownState?: string | null;
+  country?: string;
+  anglerClass?: AnglerClass;
+}
+
 /**
- * Finds or creates the angler this result belongs to.
+ * Finds or creates the angler an identity (a result row, a roster profile)
+ * refers to.
  *
  * Matching is by source-specific external id first (strongest signal, once
  * an org_profile row exists for it), then by name + hometown state, which is
@@ -35,22 +49,22 @@ interface AnglerKey {
 async function resolveAngler(
   db: SupabaseClient,
   orgId: string,
-  result: SourceResult,
+  identity: AnglerIdentity,
 ): Promise<{ key: AnglerKey; created: boolean }> {
-  if (result.externalAnglerId) {
+  if (identity.externalId) {
     const { data: existing } = await db
       .from("angler_org_profiles")
       .select("angler_id")
       .eq("org_id", orgId)
-      .eq("external_id", result.externalAnglerId)
+      .eq("external_id", identity.externalId)
       .maybeSingle();
     if (existing) return { key: { id: existing.angler_id as string }, created: false };
   }
 
-  const firstName = result.firstName.trim();
-  const lastName = result.lastName.trim();
+  const firstName = identity.firstName.trim();
+  const lastName = identity.lastName.trim();
   if (!firstName && !lastName) {
-    throw new Error("Result has no angler name — cannot resolve or create an angler row.");
+    throw new Error("No angler name given — cannot resolve or create an angler row.");
   }
 
   const { data: byName } = await db
@@ -60,7 +74,7 @@ async function resolveAngler(
     .eq("last_name", lastName);
 
   const match = (byName ?? []).find(
-    (a) => !result.hometownState || !a.hometown_state || a.hometown_state === result.hometownState,
+    (a) => !identity.hometownState || !a.hometown_state || a.hometown_state === identity.hometownState,
   );
 
   let anglerId: string;
@@ -69,7 +83,7 @@ async function resolveAngler(
   if (match) {
     anglerId = match.id as string;
   } else {
-    const baseSlug = slugify(`${firstName} ${lastName}`) || slugify(result.externalAnglerId ?? "angler");
+    const baseSlug = slugify(`${firstName} ${lastName}`) || slugify(identity.externalId ?? "angler");
     let slug = baseSlug;
     for (let attempt = 1; ; attempt++) {
       const { data: taken } = await db.from("anglers").select("id").eq("slug", slug).maybeSingle();
@@ -81,10 +95,10 @@ async function resolveAngler(
       .from("anglers")
       .insert({
         slug, first_name: firstName, last_name: lastName,
-        hometown_city: result.hometownCity ?? null,
-        hometown_state: result.hometownState ?? null,
-        country: result.country ?? "USA",
-        primary_class: result.anglerClass ?? "pro",
+        hometown_city: identity.hometownCity ?? null,
+        hometown_state: identity.hometownState ?? null,
+        country: identity.country ?? "USA",
+        primary_class: identity.anglerClass ?? "pro",
       })
       .select("id")
       .single();
@@ -93,11 +107,11 @@ async function resolveAngler(
     created = true;
   }
 
-  if (result.externalAnglerId) {
+  if (identity.externalId) {
     await db
       .from("angler_org_profiles")
       .upsert(
-        { angler_id: anglerId, org_id: orgId, external_id: result.externalAnglerId },
+        { angler_id: anglerId, org_id: orgId, external_id: identity.externalId },
         { onConflict: "org_id,external_id" },
       );
   }
@@ -384,7 +398,12 @@ export async function runIngest(
       log(`  "${event.name}": ${results.length} result row(s)`);
 
       for (const result of results) {
-        const { key, created } = await resolveAngler(db, orgId, result);
+        const { key, created } = await resolveAngler(db, orgId, {
+          externalId: result.externalAnglerId,
+          firstName: result.firstName, lastName: result.lastName,
+          hometownCity: result.hometownCity, hometownState: result.hometownState,
+          country: result.country, anglerClass: result.anglerClass,
+        });
         if (created) report.anglersCreated += 1;
         await writeResult(db, eventId, key.id, result);
         report.resultsWritten += 1;
@@ -407,4 +426,107 @@ export async function runIngest(
   }
 
   return report;
+}
+
+/**
+ * Syncs angler *profiles* from a source's own directory — independent of any
+ * event result, and the way to get "every angler," not just the ones who
+ * happen to appear in events already ingested. Only an adapter that
+ * implements the optional `roster()` method supports this.
+ *
+ * Existing anglers are enriched, never overwritten: a field already on file
+ * (a photo, a bio) is left alone, since a later, thinner source should never
+ * blank out something a richer one already supplied.
+ */
+export async function runRosterSync(
+  adapter: SourceAdapter,
+  filter: RosterFilter = {},
+): Promise<RosterReport> {
+  if (!adapter.roster) {
+    throw new Error(`${adapter.label} has no angler directory to sync (adapter.roster is not implemented).`);
+  }
+  const log = filter.log ?? (() => {});
+  const db = getAdminClient();
+
+  const report: RosterReport = {
+    source: adapter.org, scope: filter.scope ?? "(default)",
+    profilesSeen: 0, anglersCreated: 0, anglersUpdated: 0, errors: [],
+  };
+
+  log(`[${adapter.label}] resolving organization "${adapter.org}"…`);
+  const orgId = await ensureOrganization(db, adapter.org);
+
+  log(`[${adapter.label}] fetching roster (scope: ${report.scope})…`);
+  const profiles = await adapter.roster(filter);
+  report.profilesSeen = profiles.length;
+  log(`[${adapter.label}] ${profiles.length} profile(s) to process.`);
+
+  for (const profile of profiles) {
+    try {
+      const { key, created } = await resolveAngler(db, orgId, {
+        externalId: profile.externalId,
+        firstName: profile.firstName, lastName: profile.lastName,
+        hometownCity: profile.hometownCity, hometownState: profile.hometownState,
+        country: profile.country, anglerClass: filter.defaultClass ?? profile.primaryClass,
+      });
+      if (created) report.anglersCreated += 1;
+      else report.anglersUpdated += 1;
+
+      await enrichAnglerProfile(db, key.id, profile);
+
+      if (profile.externalId && profile.profileUrl) {
+        await db
+          .from("angler_org_profiles")
+          .update({ profile_url: profile.profileUrl })
+          .eq("org_id", orgId)
+          .eq("external_id", profile.externalId);
+      }
+    } catch (error) {
+      report.errors.push({
+        profile: `${profile.firstName} ${profile.lastName}`.trim() || profile.externalId || "(unknown)",
+        message: (error as Error).message,
+      });
+    }
+  }
+
+  return report;
+}
+
+/**
+ * Fills in whatever profile fields the angler row doesn't already have.
+ * Never clobbers an existing value — enrichment only adds, it doesn't
+ * demote data a richer prior sync (or a human editor) already supplied.
+ */
+async function enrichAnglerProfile(
+  db: SupabaseClient,
+  anglerId: string,
+  profile: SourceAnglerProfile,
+): Promise<void> {
+  const { data: current, error } = await db
+    .from("anglers")
+    .select("hometown_city, hometown_state, photo_url, bio, boat_sponsor, sponsors, socials, turned_pro")
+    .eq("id", anglerId)
+    .single();
+  if (error) throw new Error(`Failed to read angler ${anglerId} before enrichment: ${error.message}`);
+
+  const patch: Record<string, unknown> = {};
+  if (!current.hometown_city && profile.hometownCity) patch.hometown_city = profile.hometownCity;
+  if (!current.hometown_state && profile.hometownState) patch.hometown_state = profile.hometownState;
+  if (!current.photo_url && profile.photoUrl) patch.photo_url = profile.photoUrl;
+  if (!current.bio && profile.bio) patch.bio = profile.bio;
+  if (!current.boat_sponsor && profile.boatSponsor) patch.boat_sponsor = profile.boatSponsor;
+  if (!current.turned_pro && profile.turnedPro) patch.turned_pro = profile.turnedPro;
+  if (!(current.sponsors as string[] | null)?.length && profile.sponsors?.length) {
+    patch.sponsors = profile.sponsors;
+  }
+  if (profile.socials && Object.keys(profile.socials).length) {
+    // Socials merge per-key rather than all-or-nothing, so a Facebook link
+    // from one pass survives an Instagram link added by a later one.
+    const merged = { ...(current.socials as Record<string, string> | null), ...profile.socials };
+    if (JSON.stringify(merged) !== JSON.stringify(current.socials ?? {})) patch.socials = merged;
+  }
+
+  if (Object.keys(patch).length === 0) return;
+  const { error: updateError } = await db.from("anglers").update(patch).eq("id", anglerId);
+  if (updateError) throw new Error(`Failed to enrich angler ${anglerId}: ${updateError.message}`);
 }

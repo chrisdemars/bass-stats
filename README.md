@@ -77,10 +77,20 @@ component.
 
 ## Ingest
 
+Two independent things to pull in: **event results** (an event, its
+leaderboard, tied to whichever anglers fished it) and **angler profiles**
+(hometown, photo, socials — independent of any event, from a source's own
+directory). You generally want both.
+
 ```bash
+# Event results
 npm run ingest -- --source=bassmaster --year=2026
 npm run ingest -- --source=bassmaster --year=2026 --series=bassmaster-elite --dry-run
 npm run ingest -- --source=mlf --year=2026 --skip-existing
+
+# Angler profiles — real hometowns, photos, socials, independent of events
+npm run ingest -- --source=bassmaster --roster --scope=elite      # current Elite Series field (~100)
+npm run ingest -- --source=bassmaster --roster --scope=angler --state=TX --limit=500
 ```
 
 Requires `SUPABASE_SERVICE_ROLE_KEY` — this writes with the service role, so
@@ -96,6 +106,15 @@ browser. The same logic is exposed as `POST /api/ingest` (guarded by
 BassTrakk live-scoring feed, which can differ from a corrected official sheet
 by a late penalty; re-running the ingest after an event is finalized picks up
 any correction, since every row upserts on its natural key.
+
+It also has a `roster()` method, pulling Bassmaster's own angler directory
+(`wp-json/bassmaster/v1/persons`) — real hometowns, a working photo URL, and
+social links, independent of any tournament result. `--scope=elite` is the
+current ~100-angler Elite Series field; `--scope=angler` is every angler
+B.A.S.S. has ever tagged as one, 75,000+ records back to 1968 (use `--state`,
+`--keyword`, or `--limit` to bound a run). Enrichment never overwrites a
+field an angler row already has, so running this alongside event ingest is
+safe in either order.
 
 **MLF and NPFL are not scraped.** MLF's entire site sits behind Cloudflare
 bot management (every path, including the homepage, returns 403 to a

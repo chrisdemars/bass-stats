@@ -74,6 +74,46 @@ export interface SourceResult {
   days?: SourceResultDay[];
 }
 
+/**
+ * A profile pulled from a source's own angler directory, independent of any
+ * event result. Richer than what a leaderboard row carries — hometown,
+ * photo, bio, socials — and the way to populate "every angler" rather than
+ * only the ones who show up in whatever events have been ingested so far.
+ */
+export interface SourceAnglerProfile {
+  /** Source's own id for this person, when the source has a stable one. */
+  externalId?: string | null;
+  firstName: string;
+  lastName: string;
+  hometownCity?: string | null;
+  hometownState?: string | null;
+  country?: string;
+  photoUrl?: string | null;
+  bio?: string | null;
+  boatSponsor?: string | null;
+  sponsors?: string[];
+  socials?: Record<string, string>;
+  primaryClass?: AnglerClass;
+  turnedPro?: number | null;
+  profileUrl?: string | null;
+}
+
+export interface RosterFilter {
+  /** Source-specific scope — e.g. Bassmaster's "elite" | "angler" | "opens" taxonomy slug. */
+  scope?: string;
+  state?: string;
+  keyword?: string;
+  /** Caps how many profiles a single call returns; omit for "all in scope". */
+  limit?: number;
+  /**
+   * `AnglerClass` to assign a profile that has no class of its own — most
+   * directory listings don't carry one. Applied only when *creating* a new
+   * angler row; never used to overwrite an existing one's class.
+   */
+  defaultClass?: AnglerClass;
+  log?: (message: string) => void;
+}
+
 export interface SourceAdapter {
   /** Matches `organizations.slug`. */
   readonly org: string;
@@ -84,6 +124,11 @@ export interface SourceAdapter {
   discover(year: number): Promise<SourceEvent[]>;
   /** One event's full field. Returning [] means "nothing posted yet". */
   results(event: SourceEvent): Promise<SourceResult[]>;
+  /**
+   * The source's own angler directory, if it has one independent of event
+   * results. Optional — manual-import adapters generally don't.
+   */
+  roster?(filter?: RosterFilter): Promise<SourceAnglerProfile[]>;
 }
 
 export interface IngestOptions {
@@ -108,4 +153,13 @@ export interface IngestReport {
   anglersCreated: number;
   skipped: number;
   errors: Array<{ event: string; message: string }>;
+}
+
+export interface RosterReport {
+  source: string;
+  scope: string;
+  profilesSeen: number;
+  anglersCreated: number;
+  anglersUpdated: number;
+  errors: Array<{ profile: string; message: string }>;
 }

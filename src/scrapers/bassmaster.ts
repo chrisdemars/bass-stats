@@ -14,6 +14,15 @@
  *       The cumulative board as of that day: Rank, angler, that day's bag in
  *       ounces (BTLimitOunces) and the running total (SumOunces).
  *
+ *   GET /wp-json/bassmaster/v1/persons
+ *         ?series={taxonomy-slug}&state=XX&keyword=...&num_per_page=N&page_num=N
+ *       Bassmaster's own angler directory — a WordPress "person" post per
+ *       angler, filterable by its person-types taxonomy. `series=elite`
+ *       returns the current Elite Series roster (~100); `series=angler`
+ *       returns the full historical roster (75k+, going back to 1968).
+ *       Carries hometown, a working photo URL and socials — real profile
+ *       data, independent of any tournament result. See `roster()` below.
+ *
  * Caveats worth knowing:
  *
  *   - This is the BassTrakk live-scoring feed, the same data the broadcast
@@ -30,7 +39,8 @@
  * permitted, with no crawl-delay declared. This adapter still self-limits.
  */
 import type {
-  SourceAdapter, SourceEvent, SourceResult, SourceResultDay, SourceSeries,
+  RosterFilter, SourceAdapter, SourceAnglerProfile, SourceEvent, SourceResult,
+  SourceResultDay, SourceSeries,
 } from "./core/types";
 import { fetchJson, fetchJsonWithMeta } from "./core/http";
 import {
@@ -253,7 +263,112 @@ export const bassmasterAdapter: SourceAdapter = {
 
     return assembleResults(boards);
   },
+
+  async roster(filter: RosterFilter = {}) {
+    const scope = filter.scope ?? "angler"; // "angler" = every level, historical
+    const perPage = 100;
+    const out: SourceAnglerProfile[] = [];
+
+    for (let page = 1; ; page++) {
+      const params = new URLSearchParams({
+        series: scope, num_per_page: String(perPage), page_num: String(page),
+      });
+      if (filter.state) params.set("state", filter.state);
+      if (filter.keyword) params.set("keyword", filter.keyword);
+
+      const rows = await fetchJson<PersonRow[]>(
+        `${BASE}/bassmaster/v1/persons?${params}`,
+        { minDelayMs: DELAY_MS },
+      );
+      if (!rows.length) break;
+
+      for (const row of rows) {
+        const profile = toAnglerProfile(row);
+        if (profile) out.push(profile);
+        if (filter.limit && out.length >= filter.limit) return out.slice(0, filter.limit);
+      }
+
+      filter.log?.(`  page ${page}: ${rows.length} row(s), ${out.length} usable so far`);
+      if (rows.length < perPage) break; // short page means this was the last one
+    }
+    return out;
+  },
 };
+
+/** One row of GET /bassmaster/v1/persons. */
+interface PersonRow {
+  post_id: number;
+  post_title: string;
+  post_url: string;
+  image: string | null;
+  series_slug: string[];
+  bassmaster_person_first_name: string;
+  bassmaster_person_last_name: string;
+  bassmaster_person_city: string;
+  bassmaster_person_state: string;
+  bassmaster_person_facebook: string;
+  bassmaster_person_twitter: string;
+}
+
+/**
+ * The "angler" taxonomy also tags a handful of non-angler accounts (social
+ * media handles, staff columnists who happen to be cross-tagged). A row with
+ * no parseable name is skipped rather than stored as a blank angler.
+ */
+function toAnglerProfile(row: PersonRow): SourceAnglerProfile | null {
+  let firstName = sanitizeNamePart(row.bassmaster_person_first_name);
+  let lastName = sanitizeNamePart(row.bassmaster_person_last_name);
+  if (!firstName && !lastName) {
+    const split = splitName(decodeEntities(row.post_title ?? ""));
+    firstName = sanitizeNamePart(split.firstName);
+    lastName = sanitizeNamePart(split.lastName);
+  }
+  if (!firstName && !lastName) return null;
+
+  const socials: Record<string, string> = {};
+  if (row.bassmaster_person_facebook) socials.facebook = row.bassmaster_person_facebook;
+  if (row.bassmaster_person_twitter) socials.twitter = row.bassmaster_person_twitter;
+
+  return {
+    externalId: String(row.post_id),
+    firstName, lastName,
+    hometownCity: cleanLocation(row.bassmaster_person_city),
+    hometownState: cleanLocation(row.bassmaster_person_state),
+    country: "USA",
+    photoUrl: row.image || null,
+    socials,
+    // No reliable per-row signal for amateur vs. pro — the "angler" tag
+    // spans 50+ years of club-level Nation members alongside current Elite
+    // pros, and a social-media handle can be cross-tagged "elite" too (seen
+    // in the wild). The caller picks a default via RosterFilter.scope
+    // instead of this function guessing from messy tag soup.
+    profileUrl: row.post_url || null,
+  };
+}
+
+/** "Parts Unknown" and similar placeholders mean "no data", not a real value. */
+function cleanLocation(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim();
+  if (!v || /^(parts unknown|n\/a|unknown|tbd)$/i.test(v)) return null;
+  return v;
+}
+
+/**
+ * Across 75,000+ historical rows, a name field occasionally has stray
+ * wrapping quotes or extra text bled into it from a CMS data-entry error —
+ * e.g. a `last_name` of `"teegarden, Sr."` (quotes and all) seen in the
+ * wild. Strips wrapping quote characters and, when a comma survives,
+ * keeps only the text before it — real surnames don't contain commas, so
+ * whatever follows one here is misplaced data, not part of the name.
+ * Casing is left as the source wrote it; guessing a "corrected"
+ * capitalization risks being wrong for names like "McDonald" or "DeLong".
+ */
+function sanitizeNamePart(value: string | null | undefined): string {
+  let v = (value ?? "").trim();
+  v = v.replace(/^["'""]+|["'""]+$/g, "").trim();
+  if (v.includes(",")) v = v.split(",")[0].trim();
+  return v;
+}
 
 /**
  * Fold the per-day boards into one result per angler.
