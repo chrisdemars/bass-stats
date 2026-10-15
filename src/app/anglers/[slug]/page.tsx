@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { Award, MapPin, Ship } from "lucide-react";
-import {
-  getAnglerBySlug, getAnglerResults, getCareerStats, listAnglers,
-} from "@/lib/data";
+import { getAnglerBySlug, getAnglerResults, getCareerStats } from "@/lib/data";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { StatTile } from "@/components/ui/StatTile";
@@ -15,10 +14,12 @@ import {
 } from "@/lib/format";
 import type { AnglerResultRow } from "@/lib/types";
 
-export async function generateStaticParams() {
-  const { items } = await listAnglers({ limit: 24, sort: "earnings" });
-  return items.map((i) => ({ slug: i.angler.slug }));
-}
+// No generateStaticParams: `anglers` can be empty on a fresh database
+// (before the first ingest/roster-sync run populates it), and Next's Cache
+// Components treat an empty array from this export as a build error rather
+// than "nothing to prerender yet." Going fully dynamic here means the build
+// always succeeds regardless of database state; the page is still cached
+// per-request via the "use cache" layer in src/lib/data.
 
 export async function generateMetadata(
   { params }: PageProps<"/anglers/[slug]">,
@@ -33,7 +34,26 @@ export async function generateMetadata(
   };
 }
 
-export default async function AnglerPage({ params }: PageProps<"/anglers/[slug]">) {
+export default function AnglerPage({ params }: PageProps<"/anglers/[slug]">) {
+  return (
+    <Suspense fallback={<AnglerPageSkeleton />}>
+      <AnglerPageContent params={params} />
+    </Suspense>
+  );
+}
+
+function AnglerPageSkeleton() {
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10">
+      <div className="card h-48 animate-pulse" />
+      <div className="card mt-6 h-96 animate-pulse" />
+    </div>
+  );
+}
+
+async function AnglerPageContent({
+  params,
+}: Pick<PageProps<"/anglers/[slug]">, "params">) {
   const { slug } = await params;
   const angler = await getAnglerBySlug(slug);
   if (!angler) notFound();

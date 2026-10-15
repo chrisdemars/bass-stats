@@ -21,6 +21,12 @@ export function StandingsTable({
   const lastQualified = qualifyLabel
     ? shown.reduce((acc, r) => (r.qualified ? r.rank ?? acc : acc), 0)
     : 0;
+  // Some sources (Bassmaster's live-scoring feed, in particular) report
+  // weights but not the organization's own points formula. Rank still
+  // reflects something real — season total weight — but it isn't the
+  // official points race, so say so rather than let a column of "—" imply
+  // points exist and just aren't shown.
+  const hasAnyPoints = shown.some((r) => r.points != null);
 
   if (shown.length === 0) {
     return (
@@ -109,6 +115,12 @@ export function StandingsTable({
           </tbody>
         </table>
       </div>
+      {!hasAnyPoints ? (
+        <p className="border-t border-line px-3 py-2 text-xs text-muted">
+          Points aren’t available from this source yet — ranked by season
+          total weight instead.
+        </p>
+      ) : null}
       {qualifyLabel && lastQualified > 0 ? (
         <p className="border-t border-line px-3 py-2 text-xs text-muted">
           The rule marks the {qualifyLabel} cutoff at {lastQualified}.

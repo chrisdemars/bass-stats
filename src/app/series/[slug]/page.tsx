@@ -10,10 +10,12 @@ import { Badge } from "@/components/ui/Badge";
 import { toEventItem } from "@/lib/event-item";
 import { FORMAT_LABEL, LEVEL_LABEL } from "@/lib/format";
 
-export async function generateStaticParams() {
-  const { series } = await getCatalog();
-  return series.map((s) => ({ slug: s.slug }));
-}
+// No generateStaticParams: `series` can be empty on a fresh database (before
+// the first ingest run populates it), and Next's Cache Components treat an
+// empty array from this export as a build error rather than "nothing to
+// prerender yet." Going fully dynamic here means the build always succeeds
+// regardless of database state; the page is still cached per-request via the
+// "use cache" layer in src/lib/data.
 
 export async function generateMetadata(
   { params }: PageProps<"/series/[slug]">,
@@ -28,9 +30,28 @@ export async function generateMetadata(
   };
 }
 
-export default async function SeriesPage({
+export default function SeriesPage({
   params, searchParams,
 }: PageProps<"/series/[slug]">) {
+  return (
+    <Suspense fallback={<SeriesPageSkeleton />}>
+      <SeriesPageContent params={params} searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+function SeriesPageSkeleton() {
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10">
+      <div className="card h-40 animate-pulse" />
+      <div className="card mt-6 h-96 animate-pulse" />
+    </div>
+  );
+}
+
+async function SeriesPageContent({
+  params, searchParams,
+}: Pick<PageProps<"/series/[slug]">, "params" | "searchParams">) {
   const { slug } = await params;
   const catalog = await getCatalog();
   const series = catalog.series.find((s) => s.slug === slug);

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { ArrowRight, Fish, Trophy, Users, Wallet } from "lucide-react";
 import {
@@ -15,11 +16,12 @@ import {
   FORMAT_LABEL, count, dateRange, money, weightDecimal, weightLbsOz,
 } from "@/lib/format";
 
-/** Prerender the most recent events; the rest render on first request. */
-export async function generateStaticParams() {
-  const events = await listEvents({ limit: 24 });
-  return events.map((e) => ({ slug: e.slug }));
-}
+// No generateStaticParams: `events` can be empty on a fresh database (before
+// the first ingest run populates it), and Next's Cache Components treat an
+// empty array from this export as a build error rather than "nothing to
+// prerender yet." Going fully dynamic here means the build always succeeds
+// regardless of database state; the page is still cached per-request via the
+// "use cache" layer in src/lib/data.
 
 export async function generateMetadata(
   { params }: PageProps<"/events/[slug]">,
@@ -35,7 +37,26 @@ export async function generateMetadata(
   };
 }
 
-export default async function EventPage({ params }: PageProps<"/events/[slug]">) {
+export default function EventPage({ params }: PageProps<"/events/[slug]">) {
+  return (
+    <Suspense fallback={<EventPageSkeleton />}>
+      <EventPageContent params={params} />
+    </Suspense>
+  );
+}
+
+function EventPageSkeleton() {
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10">
+      <div className="card h-56 animate-pulse" />
+      <div className="card mt-6 h-96 animate-pulse" />
+    </div>
+  );
+}
+
+async function EventPageContent({
+  params,
+}: Pick<PageProps<"/events/[slug]">, "params">) {
   const { slug } = await params;
   const event = await getEventBySlug(slug);
   if (!event) notFound();

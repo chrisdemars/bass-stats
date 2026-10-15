@@ -261,7 +261,17 @@ async function writeResult(
   }
 }
 
-/** Recomputes season_standings for one season from the event_results on file. */
+/**
+ * Recomputes season_standings for one season from the event_results on file.
+ *
+ * Deletes and re-inserts rather than upserting: standings are fully derived
+ * from event_results every time, never incrementally patched, and
+ * `unique (season_id, division_id, angler_id)` doesn't dedupe reliably for
+ * a non-divisional series anyway — Postgres treats NULL as never equal to
+ * NULL in a unique constraint, so a series with no divisions (division_id
+ * IS NULL for every row) would let `upsert` insert a fresh duplicate row
+ * every single run instead of updating the existing one.
+ */
 async function recomputeStandings(db: SupabaseClient, seasonId: string): Promise<void> {
   const { data: seasonEvents, error: evErr } = await db
     .from("events")
@@ -269,6 +279,12 @@ async function recomputeStandings(db: SupabaseClient, seasonId: string): Promise
     .eq("season_id", seasonId);
   if (evErr) throw new Error(`standings recompute: event lookup failed: ${evErr.message}`);
   if (!seasonEvents?.length) return;
+
+  const { error: clearError } = await db
+    .from("season_standings")
+    .delete()
+    .eq("season_id", seasonId);
+  if (clearError) throw new Error(`standings clear failed: ${clearError.message}`);
 
   const eventIds = seasonEvents.map((e) => e.id as string);
   const divisionByEvent = new Map(seasonEvents.map((e) => [e.id as string, e.division_id as string | null]));
@@ -281,8 +297,17 @@ async function recomputeStandings(db: SupabaseClient, seasonId: string): Promise
 
   // One points race per (division, primary angler class) — co-anglers and
   // boaters race separately when a series has both.
+  //
+  // `points` is deliberately `number | null`, not defaulted to 0: a source
+  // can supply real weight/payout data without ever supplying a real points
+  // value (Bassmaster's live-scoring feed is exactly this case — BassTrakk
+  // reports weights, not B.A.S.S.'s own Angler of the Year point formula,
+  // which is computed and published separately). Treating "no points data"
+  // as "zero points" would assert something false about every angler in
+  // that race, so a bucket with no real points ranks by weight instead and
+  // is never labeled "AOY" — that title specifically means won-on-points.
   const buckets = new Map<string, Map<string, {
-    points: number; events: number; wins: number; top10s: number;
+    points: number | null; events: number; wins: number; top10s: number;
     weight: number; earnings: number;
   }>>();
 
@@ -291,9 +316,9 @@ async function recomputeStandings(db: SupabaseClient, seasonId: string): Promise
     const bucketKey = `${divisionId ?? "none"}:${r.angler_class}`;
     const bucket = buckets.get(bucketKey) ?? new Map();
     const cur = bucket.get(r.angler_id as string) ?? {
-      points: 0, events: 0, wins: 0, top10s: 0, weight: 0, earnings: 0,
+      points: null, events: 0, wins: 0, top10s: 0, weight: 0, earnings: 0,
     };
-    cur.points += Number(r.points ?? 0);
+    if (r.points != null) cur.points = (cur.points ?? 0) + Number(r.points);
     cur.events += 1;
     if (r.place === 1) cur.wins += 1;
     if ((r.place ?? 999) <= 10) cur.top10s += 1;
@@ -307,20 +332,18 @@ async function recomputeStandings(db: SupabaseClient, seasonId: string): Promise
     const [divisionRaw] = bucketKey.split(":");
     const divisionId = divisionRaw === "none" ? null : divisionRaw;
     const ranked = [...bucket.entries()].sort(
-      (a, b) => b[1].points - a[1].points || b[1].weight - a[1].weight,
+      (a, b) => (b[1].points ?? -Infinity) - (a[1].points ?? -Infinity) || b[1].weight - a[1].weight,
     );
     const rows = ranked.map(([anglerId, v], i) => ({
       season_id: seasonId, division_id: divisionId, angler_id: anglerId,
       rank: i + 1, points: v.points, events_fished: v.events, wins: v.wins,
       top_10s: v.top10s, total_weight: v.weight, earnings_usd: Math.round(v.earnings),
-      is_aoy: i === 0,
+      is_aoy: i === 0 && v.points != null,
       qualified: i < Math.max(3, Math.round(ranked.length * 0.35)),
     }));
     if (!rows.length) continue;
-    const { error } = await db
-      .from("season_standings")
-      .upsert(rows, { onConflict: "season_id,division_id,angler_id" });
-    if (error) throw new Error(`standings upsert failed: ${error.message}`);
+    const { error } = await db.from("season_standings").insert(rows);
+    if (error) throw new Error(`standings insert failed: ${error.message}`);
   }
 }
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { ArrowRight } from "lucide-react";
 import { getArticleBySlug, getLeaderboard, listArticles } from "@/lib/data";
@@ -11,10 +12,13 @@ import { ArticleCard } from "@/components/news/ArticleCard";
 import { Avatar } from "@/components/ui/Avatar";
 import { dateRange, money, weightLbsOz } from "@/lib/format";
 
-export async function generateStaticParams() {
-  const articles = await listArticles(20);
-  return articles.map((a) => ({ slug: a.slug }));
-}
+// No generateStaticParams: `articles` can be empty on a fresh database
+// (nothing currently writes editorial articles for a live Supabase project —
+// the sample fixture's recaps are generated locally, not scraped), and
+// Next's Cache Components treat an empty array from this export as a build
+// error rather than "nothing to prerender yet." Going fully dynamic here
+// means the build always succeeds regardless of database state; the page is
+// still cached per-request via the "use cache" layer in src/lib/data.
 
 export async function generateMetadata(
   { params }: PageProps<"/news/[slug]">,
@@ -34,7 +38,26 @@ export async function generateMetadata(
   };
 }
 
-export default async function ArticlePage({ params }: PageProps<"/news/[slug]">) {
+export default function ArticlePage({ params }: PageProps<"/news/[slug]">) {
+  return (
+    <Suspense fallback={<ArticlePageSkeleton />}>
+      <ArticlePageContent params={params} />
+    </Suspense>
+  );
+}
+
+function ArticlePageSkeleton() {
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10">
+      <div className="card h-56 animate-pulse" />
+      <div className="card mt-6 h-96 animate-pulse" />
+    </div>
+  );
+}
+
+async function ArticlePageContent({
+  params,
+}: Pick<PageProps<"/news/[slug]">, "params">) {
   const { slug } = await params;
   const article = await getArticleBySlug(slug);
   if (!article) notFound();
