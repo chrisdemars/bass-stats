@@ -46,7 +46,7 @@ import { fetchJson, fetchJsonWithMeta } from "./core/http";
 import {
   dateSpan, ouncesToPounds, parseInt10, splitName, toCompactDate, toIsoDate,
 } from "./core/parse";
-import type { ScoringFormat, SeriesLevel } from "@/lib/types";
+import type { AnglerClass, ScoringFormat, SeriesLevel } from "@/lib/types";
 
 const BASE = "https://www.bassmaster.com/wp-json";
 const DELAY_MS = 1200;
@@ -111,6 +111,24 @@ const SERIES_MAP: Record<
     level: "semi_pro", format: "bag_limit_5",
     description: "Paired pro and amateur competition.",
   },
+};
+
+/**
+ * BassTrakk's leaderboard feed has no per-angler class field of its own — it
+ * just lists who's on the water. The series an event belongs to is the only
+ * signal available, so every result in, say, a Nation event is labeled
+ * "amateur" even though the feed itself doesn't say that. "team" has no
+ * matching value in this project's angler_class enum; "amateur" is the
+ * closest honest fit for a grassroots-trail team event.
+ */
+const LEVEL_TO_CLASS: Record<SeriesLevel, AnglerClass> = {
+  professional: "pro",
+  championship: "pro",      // Classic: by definition, qualified pros
+  semi_pro: "boater",       // Opens/EQS/Pro-Am: boater division (co-anglers aren't split out in this feed)
+  amateur: "amateur",       // Nation, Kayak
+  college: "college",
+  high_school: "high_school", // includes Junior
+  team: "amateur",
 };
 
 interface TournamentPost {
@@ -203,12 +221,21 @@ export const bassmasterAdapter: SourceAdapter = {
         const term = termId ? terms.get(termId) : undefined;
         if (!term || !SERIES_MAP[term.slug]) continue;
 
-        const tms = parseInt10(meta.bassmaster_tournament_scoring_system_id);
+        // `0` shows up in the wild for events with no scoring system assigned
+        // yet (usually future events) — it is not a real tms id. Normalizing
+        // it to null here, once, matters a lot: `tms ?? fallback` only
+        // triggers on null/undefined, so a literal 0 would otherwise survive
+        // as a truthy-looking id and every such event would collide on the
+        // same external_id "0", each one silently overwriting the last in
+        // the natural-key upsert. (Caught this by diffing how many events a
+        // run logged against how many rows actually existed afterward —
+        // several real events, including entire series, were vanishing.)
+        const tms = parseInt10(meta.bassmaster_tournament_scoring_system_id) || null;
         const end = toIsoDate(meta.bassmaster_tournament_end_date) ?? start;
         const days = dateSpan(start, end);
 
         events.push({
-          externalId: String(tms ?? `wp-${post.id}`),
+          externalId: tms != null ? String(tms) : `wp-${post.id}`,
           seriesSlug: `bassmaster-${term.slug}`,
           year,
           name: decodeEntities(post.title?.rendered ?? ""),
@@ -261,7 +288,9 @@ export const bassmasterAdapter: SourceAdapter = {
     }
     if (!boards.length) return [];
 
-    return assembleResults(boards);
+    const termSlug = event.seriesSlug.replace(/^bassmaster-/, "");
+    const level = SERIES_MAP[termSlug]?.level ?? "professional";
+    return assembleResults(boards, LEVEL_TO_CLASS[level]);
   },
 
   async roster(filter: RosterFilter = {}) {
@@ -378,6 +407,7 @@ function sanitizeNamePart(value: string | null | undefined): string {
  */
 export function assembleResults(
   boards: Array<{ day: number; rows: BoardRow[] }>,
+  anglerClass: AnglerClass = "pro",
 ): SourceResult[] {
   const maxDay = Math.max(...boards.map((b) => b.day));
 
@@ -438,7 +468,7 @@ export function assembleResults(
       lastName,
       place: i + 1,
       status: acc.lastDay >= maxDay ? "official" : "missed_cut",
-      anglerClass: "pro",
+      anglerClass,
       totalWeight: acc.total,
       totalFish: acc.fish,
       days: acc.days.sort((x, y) => x.dayNumber - y.dayNumber),
