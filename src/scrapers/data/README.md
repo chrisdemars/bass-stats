@@ -17,6 +17,34 @@ arrangement with the organization, a licensed feed — drop it in here in the
 shape below, and `npm run ingest -- --source=mlf --year=2026` picks it up
 exactly like a live-scraped source: same upsert keys, same derived standings.
 
+## The easy way: `npm run paste-import`
+
+```
+npm run paste-import -- --source=mlf
+```
+
+Walks you through one event interactively: which series, the event's own
+details (name, water, dates, status), then a single paste of the leaderboard
+table copied straight out of your own browser — select the table on the
+page you're already looking at, copy, paste it in when prompted, type `END`
+on its own line. It reads a header row if there is one ("Place  Angler
+Weight  Fish  Big Bass  Payout", in any order) or falls back to that same
+column order positionally; handles tab-, comma-, or multi-space-separated
+cells (however your browser hands over a copied table); and recognizes
+status words (`DQ`, `DNF`, `Withdrew`) wherever they land, voiding the
+weight rather than recording a disqualified angler as if they'd placed
+normally. Shows a preview before writing anything, so you can bail out if
+the parse looks wrong.
+
+Piping a saved transcript back in (`npm run paste-import -- --source=mlf <
+transcript.txt`) replays it non-interactively — handy for re-running an
+import you already got right once.
+
+This never contacts MLF's or NPFL's own servers — it only reads what you
+paste in.
+
+## The manual way: editing the JSON directly
+
 ## Shape
 
 ```
@@ -67,8 +95,9 @@ project — see `src/scrapers/core/parse.ts` for conversion helpers if your
 source material uses ounces or "lbs-oz" notation.
 
 An `events.json` with zero events is a normal, supported state — the ingest
-pipeline just reports nothing new for that org/year. `npm run data:years` (or
-`manualYearsAvailable()` directly) lists which years currently have data.
+pipeline just reports nothing new for that org/year. `manualYearsAvailable()`
+(`src/scrapers/core/manual-import.ts`) lists which years currently have data,
+for an adapter's own `discover()` to filter against.
 
 The two example files in `mlf/2026/` and `npfl/2026/` are empty arrays `[]` —
 placeholders showing where real exports go, not sample data. Nothing in this

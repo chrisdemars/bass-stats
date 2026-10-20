@@ -265,6 +265,13 @@ export const supabaseRepository: Repository = {
     return data ? toAngler(row<AnglerRow>(data)!) : null;
   },
 
+  async listAnglerStates() {
+    const db = getReadClient();
+    const { data, error } = await db.rpc("list_angler_states");
+    fail("listAnglerStates", error);
+    return rows<{ state: string }>(data).map((r) => r.state);
+  },
+
   async getAnglerResults(anglerId) {
     const db = getReadClient();
     const [{ data, error }, catalog] = await Promise.all([

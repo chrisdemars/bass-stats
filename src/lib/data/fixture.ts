@@ -246,6 +246,13 @@ export const fixtureRepository: Repository = {
     return { items: all.slice(offset, offset + limit), total: all.length };
   },
 
+  async listAnglerStates() {
+    const ix = getIndex();
+    return [...new Set(
+      ix.data.anglers.map((a) => a.hometownState).filter((s): s is string => !!s),
+    )].sort();
+  },
+
   async getAnglerBySlug(slug) {
     return getIndex().anglerBySlug.get(slug) ?? null;
   },

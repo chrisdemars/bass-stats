@@ -54,7 +54,15 @@ export function parseWeight(raw: unknown): number | null {
 export function parseMoney(raw: unknown): number | null {
   if (raw == null) return null;
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const n = Number(String(raw).replace(/[^0-9.-]/g, ""));
+  // Stripping non-numeric characters from text that has no number at all
+  // (e.g. "DQ", "—", "TBD") leaves an empty string, and `Number("")` is 0 in
+  // JavaScript — not NaN. Left unguarded, that turns "not a dollar amount"
+  // into a fabricated "$0", the same silent-zero failure mode fixed
+  // elsewhere in this project's standings math. Require at least one digit
+  // before attempting the conversion.
+  const stripped = String(raw).replace(/[^0-9.-]/g, "");
+  if (!/\d/.test(stripped)) return null;
+  const n = Number(stripped);
   return Number.isFinite(n) ? n : null;
 }
 

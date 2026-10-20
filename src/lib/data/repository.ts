@@ -70,6 +70,15 @@ export interface Repository {
   getWinners(eventIds: string[]): Promise<Record<string, EventWinner>>;
   getStandings(seasonId: string, divisionId?: string | null): Promise<StandingRow[]>;
   listAnglers(filter?: AnglerFilter): Promise<{ items: AnglerListItem[]; total: number }>;
+  /**
+   * Distinct hometown states anglers actually have on file — for the
+   * directory's filter dropdown. Deliberately its own query rather than
+   * "fetch a few thousand full angler records and pick one field off each":
+   * that approach pulls every career-stats aggregate along for the ride and
+   * gets slow fast as the roster grows (timed out outright once the real
+   * Bassmaster dataset reached a couple thousand anglers).
+   */
+  listAnglerStates(): Promise<string[]>;
   getAnglerBySlug(slug: string): Promise<Angler | null>;
   getAnglerResults(anglerId: string): Promise<AnglerResultRow[]>;
   getCareerStats(anglerId: string): Promise<CareerStats>;

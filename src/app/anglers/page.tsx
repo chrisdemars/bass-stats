@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { getCatalog, listAnglers } from "@/lib/data";
+import { getCatalog, listAnglerStates, listAnglers } from "@/lib/data";
 import { AnglerCard } from "@/components/anglers/AnglerCard";
 import { AnglerFilters } from "@/components/anglers/AnglerFilters";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -34,12 +34,7 @@ export default function AnglersPage({ searchParams }: PageProps<"/anglers">) {
 }
 
 async function Filters() {
-  const { organizations } = await getCatalog();
-  // Keep the state list to places anglers actually come from.
-  const { items } = await listAnglers({ limit: 5000, sort: "name" });
-  const states = [
-    ...new Set(items.map((i) => i.angler.hometownState).filter((s): s is string => !!s)),
-  ].sort();
+  const [{ organizations }, states] = await Promise.all([getCatalog(), listAnglerStates()]);
 
   return (
     <AnglerFilters

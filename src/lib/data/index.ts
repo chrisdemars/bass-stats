@@ -79,6 +79,13 @@ export async function listAnglers(filter: AnglerFilter = {}) {
   return repo.listAnglers(filter);
 }
 
+export async function listAnglerStates() {
+  "use cache";
+  cacheTag(tags.anglers);
+  cacheLife("hours");
+  return repo.listAnglerStates();
+}
+
 export async function getAnglerBySlug(slug: string) {
   "use cache";
   cacheTag(tags.anglers, tags.angler(slug));

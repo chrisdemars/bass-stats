@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "ingest": "tsx --env-file-if-exists=.env scripts/ingest.ts",
-    "data:generate": "tsx scripts/generate-dataset.ts"
+    "data:generate": "tsx scripts/generate-dataset.ts",
+    "paste-import": "tsx scripts/paste-import.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

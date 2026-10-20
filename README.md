@@ -119,14 +119,15 @@ safe in either order.
 **MLF and NPFL are not scraped.** MLF's entire site sits behind Cloudflare
 bot management (every path, including the homepage, returns 403 to a
 non-browser request) — an active technical control this project does not
-attempt to defeat. NPFL's `robots.txt` is a flat `Disallow: /`, which the
-HTTP client in `src/scrapers/core/http.ts` refuses with no override. Both
-adapters instead read manually-supplied files from
-`src/scrapers/data/<org>/<year>/` — see
-[`src/scrapers/data/README.md`](src/scrapers/data/README.md) for the exact
-shape. Drop in data you have a legitimate way to get (a personal export, an
-official data-sharing arrangement) and the ingest pipeline treats it exactly
-like a live-scraped source.
+attempt to defeat, and MLF has publicly said they don't run a developer API
+at all. NPFL's `robots.txt` is a flat `Disallow: /`, which the HTTP client in
+`src/scrapers/core/http.ts` refuses with no override. Both adapters instead
+read manually-supplied files from `src/scrapers/data/<org>/<year>/` — the
+easiest way in is `npm run paste-import -- --source=mlf`, which walks you
+through pasting a leaderboard copied out of your own browser session and
+writes the files for you; see
+[`src/scrapers/data/README.md`](src/scrapers/data/README.md) for that and
+the raw JSON shape if you'd rather edit it by hand.
 
 Adding a fourth source means writing one file that implements
 `SourceAdapter` (`src/scrapers/core/types.ts`) — discover a season's events,
@@ -154,6 +155,7 @@ sport writes them; the underlying value is always decimal pounds
 | `npm run lint` | ESLint |
 | `npm run data:generate` | Regenerate the sample fixture + `supabase/seed.sql` |
 | `npm run ingest -- --source=<org> --year=YYYY` | Run a scrape/import into Supabase |
+| `npm run paste-import -- --source=<mlf\|npfl>` | Interactively turn a copy-pasted leaderboard into manual-import data |
 
 ## Disclosure
 
