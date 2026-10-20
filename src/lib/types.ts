@@ -201,7 +201,15 @@ export interface CareerStats {
   top25s: number;
   avgPlace: number | null;
   bestPlace: number | null;
-  careerEarnings: number;
+  /**
+   * Null means "no payout data available from any source for this angler's
+   * results" — distinct from a genuine $0 (an angler who fished and is on
+   * record earning nothing). Bassmaster's live-scoring feed never reports
+   * payouts at all, so every Bassmaster-only angler's career earnings is
+   * this, not a real zero — treat it the way the rest of this project
+   * treats "we don't have that number" everywhere else.
+   */
+  careerEarnings: number | null;
   careerWeight: number;
   careerFish: number;
   biggestBass: number | null;

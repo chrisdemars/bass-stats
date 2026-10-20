@@ -99,7 +99,11 @@ function toCareer(r: CareerStatsRow): CareerStats {
     events: n(r.events), wins: n(r.wins), top10s: n(r.top_10s), top25s: n(r.top_25s),
     avgPlace: r.avg_place == null ? null : Number(r.avg_place),
     bestPlace: r.best_place,
-    careerEarnings: n(r.career_earnings),
+    // Not run through n(): the materialized view's career_earnings is a
+    // plain sum(), which is SQL NULL (not 0) when every contributing
+    // event_result.payout_usd is null — see the CareerStats.careerEarnings
+    // doc comment for why that distinction matters.
+    careerEarnings: r.career_earnings == null ? null : Number(r.career_earnings),
     careerWeight: n(r.career_weight),
     careerFish: n(r.career_fish),
     biggestBass: r.biggest_bass == null ? null : Number(r.biggest_bass),

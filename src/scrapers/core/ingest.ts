@@ -446,9 +446,26 @@ export async function runIngest(
         report.errors.push({ event: `season ${seasonId}`, message: (error as Error).message });
       }
     }
+    await refreshCareerStats(db, log);
   }
 
   return report;
+}
+
+/**
+ * angler_career_stats is a materialized view (see migration 0004) — fast to
+ * read, but it only reflects reality as of its last refresh. A failed
+ * refresh doesn't invalidate anything already written (events, results and
+ * standings are all correct regardless), so it's logged rather than thrown:
+ * worth knowing about, not worth discarding an otherwise-successful run over.
+ */
+async function refreshCareerStats(
+  db: SupabaseClient,
+  log: (message: string) => void,
+): Promise<void> {
+  log("Refreshing angler career stats…");
+  const { error } = await db.rpc("refresh_angler_career_stats");
+  if (error) log(`  WARNING: career stats refresh failed: ${error.message}`);
 }
 
 /**
@@ -511,6 +528,11 @@ export async function runRosterSync(
       });
     }
   }
+
+  // A roster sync can create brand-new angler rows the materialized view
+  // has never seen, so a freshly-created angler's career stats page would
+  // find no row at all until this refresh runs.
+  if (report.anglersCreated > 0) await refreshCareerStats(db, log);
 
   return report;
 }

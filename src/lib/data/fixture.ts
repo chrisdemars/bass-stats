@@ -85,7 +85,13 @@ function buildIndex(): Index {
         ? Number((places.reduce((a, b) => a + b, 0) / places.length).toFixed(1))
         : null,
       bestPlace: places.length ? Math.min(...places) : null,
-      careerEarnings: live.reduce((a, r) => a + (r.payoutUsd ?? 0), 0),
+      // null, not 0, when not one result has a payout on record — see the
+      // CareerStats.careerEarnings doc comment. The bundled sample fixture
+      // always populates a payout, so this only matters for a real source
+      // (Bassmaster) that doesn't, but the two repositories should agree.
+      careerEarnings: live.some((r) => r.payoutUsd != null)
+        ? live.reduce((a, r) => a + (r.payoutUsd ?? 0), 0)
+        : null,
       careerWeight: Number(live.reduce((a, r) => a + (r.totalWeight ?? 0), 0).toFixed(2)),
       careerFish: live.reduce((a, r) => a + (r.totalFish ?? 0), 0),
       biggestBass: live.reduce<number | null>(
@@ -231,13 +237,25 @@ export const fixtureRepository: Repository = {
         orgSlugs: [...(ix.orgsByAngler.get(angler.id) ?? [])],
       }));
 
+    // Unknown earnings (null) sort last, matching NULLS LAST in the
+    // Supabase repository's equivalent query — `null - number` is NaN in
+    // JS, which Array.sort treats as "equal," silently scattering
+    // null-earnings anglers through the list instead of grouping them
+    // predictably at the bottom.
+    const byEarnings = (x: AnglerListItem, y: AnglerListItem) => {
+      if (x.stats.careerEarnings == null && y.stats.careerEarnings == null) return 0;
+      if (x.stats.careerEarnings == null) return 1;
+      if (y.stats.careerEarnings == null) return -1;
+      return y.stats.careerEarnings - x.stats.careerEarnings;
+    };
+
     const sort = filter.sort ?? "earnings";
     all.sort((a, b) => {
       switch (sort) {
         case "name": return a.angler.lastName.localeCompare(b.angler.lastName);
-        case "wins": return b.stats.wins - a.stats.wins || b.stats.careerEarnings - a.stats.careerEarnings;
+        case "wins": return b.stats.wins - a.stats.wins || byEarnings(a, b);
         case "events": return b.stats.events - a.stats.events;
-        default: return b.stats.careerEarnings - a.stats.careerEarnings;
+        default: return byEarnings(a, b);
       }
     });
 
